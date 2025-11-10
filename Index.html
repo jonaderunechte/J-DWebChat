@@ -93,6 +93,7 @@
         .header-buttons {
             display: flex;
             gap: 10px;
+            align-items: center;
         }
 
         .header button {
@@ -135,6 +136,17 @@
             border-radius: 5px;
         }
 
+        .sidebar-header button {
+            margin-top: 10px;
+            width: 100%;
+            padding: 10px;
+            background: #25d366;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
         .chat-list {
             flex: 1;
             overflow-y: auto;
@@ -168,6 +180,7 @@
             color: white;
             font-weight: bold;
             font-size: 20px;
+            flex-shrink: 0;
         }
 
         .chat-info {
@@ -239,6 +252,7 @@
 
         .message-text {
             margin-bottom: 3px;
+            white-space: pre-wrap;
         }
 
         .message-time {
@@ -249,6 +263,7 @@
 
         .message-image, .message-video {
             max-width: 100%;
+            max-height: 300px;
             border-radius: 5px;
             margin-bottom: 5px;
         }
@@ -263,6 +278,7 @@
         .message-link {
             color: #039be5;
             text-decoration: underline;
+            word-break: break-all;
         }
 
         .input-area {
@@ -297,6 +313,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            font-size: 18px;
         }
 
         .input-area button:hover {
@@ -358,14 +375,14 @@
             <div class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <input type="text" id="newChatInput" placeholder="Username für neuen Chat eingeben...">
-                    <button onclick="startNewChat()" style="margin-top: 10px; width: 100%; padding: 10px; background: #25d366; color: white; border: none; border-radius: 5px; cursor: pointer;">Neuer Chat</button>
+                    <button onclick="startNewChat()">Neuer Chat</button>
                 </div>
                 <div class="chat-list" id="chatList">
-                    <div class="chat-item" onclick="selectChat('global')">
+                    <div class="chat-item" onclick="selectChat('global', 'Globaler Chat')">
                         <div class="chat-avatar">🌍</div>
                         <div class="chat-info">
                             <div class="chat-name">Globaler Chat</div>
-                            <div class="chat-preview">Öffentlicher Gruppencha</div>
+                            <div class="chat-preview">Öffentlicher Gruppenchat</div>
                         </div>
                     </div>
                 </div>
@@ -382,8 +399,8 @@
     <script type="module">
         // Firebase-Konfiguration - ERSETZE DIESE WERTE MIT DEINEN EIGENEN!
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getDatabase, ref, push, onValue, set, query, orderByChild, limitToLast } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
-        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js';
+        import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query as firestoreQuery, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
         const firebaseConfig = {
             apiKey: "DEINE_API_KEY",
@@ -396,11 +413,12 @@
         };
 
         const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        const storage = getStorage(app);
+        const realtimeDb = getDatabase(app);
+        const firestore = getFirestore(app);
 
         let currentUser = '';
         let currentChat = '';
+        let currentChatName = '';
         let messageListeners = {};
 
         window.login = function() {
@@ -419,6 +437,7 @@
         window.logout = function() {
             currentUser = '';
             currentChat = '';
+            currentChatName = '';
             document.getElementById('loginScreen').style.display = 'flex';
             document.getElementById('chatContainer').style.display = 'none';
             document.getElementById('usernameInput').value = '';
@@ -428,6 +447,13 @@
             const otherUser = document.getElementById('newChatInput').value.trim();
             if (otherUser && otherUser !== currentUser) {
                 const chatId = getChatId(currentUser, otherUser);
+                
+                // Prüfe ob Chat-Item bereits existiert
+                const existingItem = document.querySelector(`[data-chat-id="${chatId}"]`);
+                if (!existingItem) {
+                    addChatToSidebar(chatId, otherUser);
+                }
+                
                 selectChat(chatId, otherUser);
                 document.getElementById('newChatInput').value = '';
             } else {
@@ -439,25 +465,51 @@
             return [user1, user2].sort().join('_');
         }
 
-        function loadChats() {
-            // Später könnten hier auch private Chats geladen werden
+        function addChatToSidebar(chatId, displayName) {
+            const chatList = document.getElementById('chatList');
+            const existingItem = document.querySelector(`[data-chat-id="${chatId}"]`);
+            
+            if (existingItem) return;
+
+            const chatItem = document.createElement('div');
+            chatItem.className = 'chat-item';
+            chatItem.setAttribute('data-chat-id', chatId);
+            chatItem.onclick = () => selectChat(chatId, displayName);
+            chatItem.innerHTML = `
+                <div class="chat-avatar">${displayName.charAt(0).toUpperCase()}</div>
+                <div class="chat-info">
+                    <div class="chat-name">${displayName}</div>
+                    <div class="chat-preview">Privater Chat</div>
+                </div>
+            `;
+            chatList.appendChild(chatItem);
         }
 
-        window.selectChat = function(chatId, otherUser = null) {
+        function loadChats() {
+            // Später könnten hier gespeicherte Chats geladen werden
+        }
+
+        window.selectChat = function(chatId, displayName) {
             currentChat = chatId;
+            currentChatName = displayName;
             
             // Aktiviere Chat-Item
             document.querySelectorAll('.chat-item').forEach(item => {
                 item.classList.remove('active');
             });
-            event?.target.closest('.chat-item')?.classList.add('active');
+            const activeItem = document.querySelector(`[data-chat-id="${chatId}"]`);
+            if (activeItem) {
+                activeItem.classList.add('active');
+            } else {
+                event?.target.closest('.chat-item')?.classList.add('active');
+            }
 
             // Zeige Chat-Area
             const chatArea = document.getElementById('chatArea');
             chatArea.innerHTML = `
                 <div class="chat-header">
-                    <div class="chat-avatar">${chatId === 'global' ? '🌍' : otherUser?.charAt(0).toUpperCase() || '👤'}</div>
-                    <div class="chat-name">${chatId === 'global' ? 'Globaler Chat' : otherUser || chatId}</div>
+                    <div class="chat-avatar">${chatId === 'global' ? '🌍' : displayName?.charAt(0).toUpperCase() || '👤'}</div>
+                    <div class="chat-name">${displayName || chatId}</div>
                 </div>
                 <div class="messages-container" id="messagesContainer"></div>
                 <div class="input-area">
@@ -472,22 +524,26 @@
         };
 
         function loadMessages(chatId) {
-            // Remove old listener
-            if (messageListeners[chatId]) {
-                // Firebase listeners werden automatisch durch onValue verwaltet
-            }
-
-            const messagesRef = ref(db, `chats/${chatId}/messages`);
+            // Verwende Realtime Database für Nachrichten
+            const messagesRef = ref(realtimeDb, `chats/${chatId}/messages`);
             const messagesQuery = query(messagesRef, orderByChild('timestamp'), limitToLast(100));
             
+            if (messageListeners[chatId]) {
+                // Alte Listener werden automatisch ersetzt
+            }
+
             messageListeners[chatId] = onValue(messagesQuery, (snapshot) => {
                 const container = document.getElementById('messagesContainer');
                 if (!container) return;
                 
                 container.innerHTML = '';
                 
+                const messages = [];
                 snapshot.forEach((childSnapshot) => {
-                    const message = childSnapshot.val();
+                    messages.push(childSnapshot.val());
+                });
+
+                messages.forEach(message => {
                     displayMessage(message);
                 });
 
@@ -509,26 +565,39 @@
             }
 
             if (message.type === 'text') {
-                const text = linkify(message.text);
+                const text = linkify(escapeHtml(message.text));
                 content += `<div class="message-text">${text}</div>`;
             } else if (message.type === 'image') {
-                content += `<img src="${message.url}" class="message-image" alt="Bild">`;
+                content += `<img src="${message.data}" class="message-image" alt="Bild">`;
+                if (message.caption) {
+                    content += `<div class="message-text">${escapeHtml(message.caption)}</div>`;
+                }
             } else if (message.type === 'video') {
-                content += `<video src="${message.url}" class="message-video" controls></video>`;
+                content += `<video src="${message.data}" class="message-video" controls></video>`;
+                if (message.caption) {
+                    content += `<div class="message-text">${escapeHtml(message.caption)}</div>`;
+                }
             } else if (message.type === 'file') {
-                content += `<div class="message-file">📄 <a href="${message.url}" target="_blank">${message.fileName}</a></div>`;
+                content += `<div class="message-file">📄 <a href="${message.data}" download="${message.fileName || 'Datei'}">${escapeHtml(message.fileName || 'Datei')}</a></div>`;
             }
 
-            content += `<div class="message-time">${new Date(message.timestamp).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'})}</div>`;
+            const timestamp = message.timestamp || Date.now();
+            content += `<div class="message-time">${new Date(timestamp).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'})}</div>`;
             
             messageDiv.innerHTML = `<div class="message-bubble">${content}</div>`;
             container.appendChild(messageDiv);
         }
 
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         function linkify(text) {
             const urlRegex = /(https?:\/\/[^\s]+)/g;
             return text.replace(urlRegex, (url) => {
-                return `<a href="${url}" class="message-link" target="_blank">${url}</a>`;
+                return `<a href="${url}" class="message-link" target="_blank" rel="noopener noreferrer">${url}</a>`;
             });
         }
 
@@ -545,35 +614,55 @@
                 timestamp: Date.now()
             };
 
-            await push(ref(db, `chats/${currentChat}/messages`), message);
-            input.value = '';
+            try {
+                await push(ref(realtimeDb, `chats/${currentChat}/messages`), message);
+                input.value = '';
+            } catch (error) {
+                alert('Fehler beim Senden: ' + error.message);
+            }
         };
 
         window.handleFileUpload = async function(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            const fileRef = storageRef(storage, `files/${currentChat}/${Date.now()}_${file.name}`);
+            // Größenlimit: 5MB für Bilder/Videos, 2MB für andere Dateien
+            const maxSize = file.type.startsWith('image/') || file.type.startsWith('video/') ? 5 * 1024 * 1024 : 2 * 1024 * 1024;
             
+            if (file.size > maxSize) {
+                alert('Datei zu groß! Maximum: ' + (maxSize / 1024 / 1024) + 'MB');
+                event.target.value = '';
+                return;
+            }
+
             try {
-                await uploadBytes(fileRef, file);
-                const url = await getDownloadURL(fileRef);
+                const reader = new FileReader();
+                
+                reader.onload = async function(e) {
+                    const base64Data = e.target.result;
+                    
+                    let type = 'file';
+                    if (file.type.startsWith('image/')) type = 'image';
+                    else if (file.type.startsWith('video/')) type = 'video';
 
-                let type = 'file';
-                if (file.type.startsWith('image/')) type = 'image';
-                else if (file.type.startsWith('video/')) type = 'video';
+                    const message = {
+                        sender: currentUser,
+                        type: type,
+                        data: base64Data,
+                        fileName: file.name,
+                        timestamp: Date.now()
+                    };
 
-                const message = {
-                    sender: currentUser,
-                    type: type,
-                    url: url,
-                    fileName: file.name,
-                    timestamp: Date.now()
+                    try {
+                        await push(ref(realtimeDb, `chats/${currentChat}/messages`), message);
+                    } catch (error) {
+                        alert('Fehler beim Senden: ' + error.message);
+                    }
                 };
 
-                await push(ref(db, `chats/${currentChat}/messages`), message);
+                reader.readAsDataURL(file);
             } catch (error) {
-                alert('Fehler beim Hochladen der Datei: ' + error.message);
+                alert('Fehler beim Lesen der Datei: ' + error.message);
             }
 
             event.target.value = '';
